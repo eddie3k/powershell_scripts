@@ -1,9 +1,4 @@
-# Ensure the script runs with elevated permissions
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Start-Process powershell.exe "-NoProfile -ExecutionPolicy Bypass -File $PSCommandPath" -Verb RunAs
-    exit
-}
-
+# Must run this script as admin
 # Create COM object for Windows Update
 $updateSession = New-Object -ComObject "Microsoft.Update.Session"
 $updateSearcher = $updateSession.CreateUpdateSearcher()
@@ -16,24 +11,42 @@ if ($searchResult.Updates.Count -gt 0) {
     $updatesToDownload = New-Object -ComObject "Microsoft.Update.UpdateColl"
     
     $searchResult.Updates | ForEach-Object {
-        # Add to collection of updates to download
-        $updatesToDownload.Add($_) | Out-Null
+        # Check if update is not already downloaded
+        if ($_.IsDownloaded -eq $false) {
+            # Add to collection of updates to download
+            $updatesToDownload.Add($_) | Out-Null
+        }
     }
     
-    # Download updates
-    $downloader = $updateSession.CreateUpdateDownloader()
-    $downloader.Updates = $updatesToDownload
-    $downloader.Download()
-    
-    # Install updates
-    $installer = $updateSession.CreateUpdateInstaller()
-    $installer.Updates = $updatesToDownload
-    $installResult = $installer.Install()
+    # If there are updates to download
+    if ($updatesToDownload.Count -gt 0) {
+        # Download updates
+        $downloader = $updateSession.CreateUpdateDownloader()
+        $downloader.Updates = $updatesToDownload
+        $downloader.Download()
+        
+        # Collection for updates to install
+        $updatesToInstall = New-Object -ComObject "Microsoft.Update.UpdateColl"
+        
+        # Select the downloaded updates to install
+        $searchResult.Updates | ForEach-Object {
+            if ($_.IsDownloaded) {
+                $updatesToInstall.Add($_) | Out-Null
+            }
+        }
+        
+        # Install updates
+        $installer = $updateSession.CreateUpdateInstaller()
+        $installer.Updates = $updatesToInstall
+        $installResult = $installer.Install()
 
-    if ($installResult.ResultCode -eq 2) {
-        Write-Output "Updates installed successfully!"
+        if ($installResult.ResultCode -eq 2) {
+            Write-Output "Updates installed successfully!"
+        } else {
+            Write-Output "Failed to install updates. Result Code: $($installResult.ResultCode)"
+        }
     } else {
-        Write-Output "Failed to install updates. Result Code: $($installResult.ResultCode)"
+        Write-Output "Updates already downloaded."
     }
 } else {
     Write-Output "No updates found."
